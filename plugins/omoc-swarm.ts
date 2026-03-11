@@ -665,6 +665,74 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
         },
       }),
 
+      "swarm.jam": tool({
+        description:
+          "Collaborative swarm run in the SAME worktree: sends a coordination prompt to multiple members so they can work together (may touch the same files).",
+        args: {
+          id: schema.string().min(1).optional().describe("Optional swarm id; defaults to current session's swarm"),
+          prompt: schema.string().min(1).describe("Prompt to send"),
+          targets: schema.array(schema.string().min(1)).optional().describe("Optional list of member names to include"),
+        },
+        async execute(args, context) {
+          const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
+          if ("error" in result) return result.error;
+          const swarm = result.swarm;
+
+          const targetNames = (args.targets?.length ? args.targets : Object.keys(swarm.members)).map(
+            normalizeMemberName,
+          );
+          const targets: SwarmMember[] = [];
+          for (const name of targetNames) {
+            const member = swarm.members[name];
+            if (!member) return `Error: unknown member '${name}'. Known: ${Object.keys(swarm.members).join(", ")}`;
+            targets.push(member);
+          }
+
+          const groups = groupMembersByModel(targets);
+          const resultsByMember = new Map<string, string>();
+
+          await Promise.all(
+            Array.from(groups.entries()).map(async ([, group]) => {
+              // Same-model group executes sequentially to avoid provider/model collisions.
+              for (const member of group) {
+                const memberPrompt = [
+                  `You are '${member.name}' (agent '${member.agent}') collaborating in swarm '${swarm.id}'.`,
+                  `You share the SAME worktree with other members (no isolation).`,
+                  `Coordinate via tool swarm.send before making overlapping edits.`,
+                  "",
+                  `First message requirement: state which files you plan to touch.`,
+                  "",
+                  args.prompt,
+                ].join("\n");
+
+                const response = await must<{ parts: Array<any> }>(
+                  `jam ${member.name}`,
+                  client.session.prompt({
+                    query: { directory: swarm.directory },
+                    path: { id: member.sessionID },
+                    body: {
+                      agent: member.agent,
+                      parts: [{ type: "text", text: memberPrompt }],
+                    },
+                  }),
+                );
+
+                resultsByMember.set(member.name, extractText(response.parts) || "(no text output)");
+              }
+            }),
+          );
+
+          const combined = targetNames
+            .map((name) => {
+              const text = resultsByMember.get(name) ?? "(missing)";
+              return [`### ${name}`, text].join("\n");
+            })
+            .join("\n\n");
+
+          return combined;
+        },
+      }),
+
       "swarm.send": tool({
         description:
           "Send a message to another swarm member (routes as a prompt into their session). Optionally waits for their reply.",

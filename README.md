@@ -31,6 +31,8 @@ opencode
 - `swarm.send` — message another member (routes as a prompt)
 - `swarm.forget` — forget local swarm mapping (sessions remain)
 - `swarm.max` — MAX mode: parallel editor tries in isolated git worktrees + selector picks winner (optional apply)
+- `swarm.jam` — collaborative run in the same worktree (no isolation)
+- `swarm.max` — MAX mode: parallel editor tries in isolated git worktrees + selector picks winner (optional apply)
 
 ## Side-by-side tmux UI
 
