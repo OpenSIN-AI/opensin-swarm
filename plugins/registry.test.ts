@@ -10,9 +10,7 @@ import {
   validateRegistryEntry,
   getUnknownAgentDiagnostic,
   getAgentSuggestions,
-  AGENT_ALIASES,
-  VALID_AGENT_IDS,
-} from './registry';
+} from './registry.js';
 
 function test(name: string, fn: () => void) {
   try {
@@ -175,7 +173,7 @@ test('getUnknownAgentDiagnostic should generate helpful messages', () => {
 
 test('getAgentSuggestions should find similar agents', () => {
   const suggestions = getAgentSuggestions('plan');
-  assert(suggestions.some(s => s.includes('plan')), 'should find plan-related agents');
+  assert(suggestions.some((s: string) => s.includes('plan')), 'should find plan-related agents');
 });
 
 test('getAgentSuggestions should limit results', () => {

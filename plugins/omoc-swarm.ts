@@ -7,15 +7,23 @@ import type { Config } from "@opencode-ai/sdk";
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { BunShell } from "@opencode-ai/plugin/dist/shell";
-import { mkdir, rm, writeFile, readFile, readdir } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
+  VALID_AGENT_IDS,
   resolveAgentId,
-  createRegistryEntry,
-  validateRegistry,
   getUnknownAgentDiagnostic,
-  isValidAgentId,
-} from "./registry";
+  loadSwarmRegistry,
+  saveSwarmRegistry,
+} from "./registry.js";
+import {
+  appendSwarmEvent,
+  loadSwarmEvents,
+  rememberSwarmLearning,
+  reserveSwarmPaths,
+  releaseSwarmReservations,
+  findSwarmIdFromEvents,
+} from "./state.js";
 
 type SwarmMemberConfig = {
   name: string;
@@ -24,8 +32,6 @@ type SwarmMemberConfig = {
 
 type SwarmMember = SwarmMemberConfig & {
   sessionID: string;
-  resolvedAgent?: string;
-  agentError?: string;
 };
 
 type SwarmState = {
@@ -35,7 +41,6 @@ type SwarmState = {
   createdAt: number;
   createdBySessionID: string;
   members: Record<string, SwarmMember>;
-  registryPersisted?: boolean;
 };
 
 const swarms = new Map<string, SwarmState>();
@@ -125,103 +130,23 @@ function normalizeMemberName(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/**
- * Registry path for persisting swarm member identities
- */
-const REGISTRY_FILENAME = '.omoc-registry.json';
+type AgentResolution = {
+  agentId: string | null;
+  error?: string;
+};
 
-/**
- * Resolves agent ID with registry-backed validation.
- * Falls back to legacy role mapping for backward compatibility.
- * Returns structured error for unknown agents.
- */
-function resolveAgentForMemberName(
-  memberName: string,
-  requestedAgent: string
-): { agentId: string; error?: string } {
-  const normalized = normalizeMemberName(memberName);
-  
-  // Try to resolve the requested agent
-  const resolved = resolveAgentId(requestedAgent);
-  
-  if (resolved) {
-    return { agentId: resolved };
-  }
-  
-  // Legacy fallback for backward compatibility
-  const legacyMapping = resolveAgentId(normalized);
-  if (legacyMapping && normalized !== requestedAgent.toLowerCase()) {
-    return { agentId: legacyMapping };
-  }
-  
-  // Unknown agent - return diagnostic
-  const validAgents = Array.from(new Set([
-    'plan', 'build', 'explore', 'general',
-    'oracle', 'metis', 'momus', 'librarian'
-  ])).sort();
-  
+function resolveAgentForMemberName(_memberName: string, requestedAgent: string): AgentResolution {
+  const direct = resolveAgentId(requestedAgent);
+  if (direct) return { agentId: direct };
+
   return {
-    agentId: 'general',
-    error: getUnknownAgentDiagnostic(requestedAgent, validAgents)
+    agentId: null,
+    error: getUnknownAgentDiagnostic(requestedAgent, [...VALID_AGENT_IDS]),
   };
 }
 
-/**
- * Gets the registry file path for a swarm
- */
-function getRegistryPath(directory: string): string {
-  return join(directory, REGISTRY_FILENAME);
-}
-
-/**
- * Loads swarm registry from disk
- */
-async function loadRegistry(directory: string, swarmId: string): Promise<Record<string, SwarmMemberConfig> | null> {
-  try {
-    const registryPath = getRegistryPath(directory);
-    const content = await readFile(registryPath, 'utf-8');
-    const data = JSON.parse(content);
-    
-    if (!validateRegistry(data) || data.swarmId !== swarmId) {
-      return null;
-    }
-    
-    const members: Record<string, SwarmMemberConfig> = {};
-    for (const [key, entry] of Object.entries(data.members)) {
-      members[key] = {
-        name: entry.memberName,
-        agent: entry.agentId,
-      };
-    }
-    return members;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Saves swarm registry to disk
- */
-async function saveRegistry(
-  directory: string,
-  swarmId: string,
-  members: Record<string, SwarmMember>
-): Promise<void> {
-  const registryPath = getRegistryPath(directory);
-  
-  const registry = {
-    version: 1,
-    swarmId,
-    createdAt: Date.now(),
-    members: Object.values(members).map(m => ({
-      schemaVersion: 1,
-      memberName: m.name,
-      agentId: m.resolvedAgent || m.agent,
-      createdAt: Date.now(),
-    })),
-  };
-  
-  await writeFile(registryPath, JSON.stringify(registry, null, 2), 'utf-8');
+function resolveLegacyMemberAgent(memberName: string): string | null {
+  return resolveAgentId(memberName);
 }
 
 function formatSwarm(swarm: SwarmState): string {
@@ -295,20 +220,11 @@ async function discoverSwarmForSession(
   worktree: string,
 ): Promise<SwarmState | undefined> {
   try {
-    const current = await must<any>(
-      `get session ${sessionID}`,
-      client.session.get({ query: { directory }, path: { id: sessionID } }),
-    );
-
+    const current = await must<any>(`get session ${sessionID}`, client.session.get({ query: { directory }, path: { id: sessionID } }));
     const rootID = current.parentID || current.id;
-    const root = rootID === current.id
-      ? current
-      : await must<any>(`get root session ${rootID}`, client.session.get({ query: { directory }, path: { id: rootID } }));
-
-    const children = await must<any[]>(
-      `list children for ${rootID}`,
-      client.session.children({ query: { directory }, path: { id: rootID } }),
-    );
+    const root = rootID === current.id ? current : await must<any>(`get root session ${rootID}`, client.session.get({ query: { directory }, path: { id: rootID } }));
+    const children = await must<any[]>(`list children for ${rootID}`, client.session.children({ query: { directory }, path: { id: rootID } }));
+    const events = await loadSwarmEvents(directory);
 
     const prefixCounts = new Map<string, number>();
     for (const child of children) {
@@ -319,28 +235,34 @@ async function discoverSwarmForSession(
 
     const bestPrefix = Array.from(prefixCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
     const fallbackPrefix = parseSwarmTitle(root.title || "").swarmId;
-    const swarmId = bestPrefix || fallbackPrefix || `auto_${rootID}`;
+    const eventPrefix = findSwarmIdFromEvents(events, sessionID);
+    const swarmId = bestPrefix || fallbackPrefix || eventPrefix || `auto_${rootID}`;
 
+    const registry = await loadSwarmRegistry(directory, swarmId);
+    const creationEvent = [...events].reverse().find((event) => event.swarmId === swarmId && event.type === "swarm.create");
+    const eventMembers = Array.isArray(creationEvent?.data?.members)
+      ? (creationEvent?.data?.members as Array<{ name?: string; agent?: string }> )
+      : [];
     const members: Record<string, SwarmMember> = {};
+
     for (const child of children) {
       const parsed = parseSwarmTitle(child.title || "");
       if (!parsed.memberName) continue;
       if (parsed.swarmId && parsed.swarmId !== swarmId) continue;
-    const normalized = normalizeMemberName(parsed.memberName);
-    if (!normalized) continue;
-    
-    // Use legacy role mapping for backward compatibility
-    const legacyAgent = normalized === 'planner' ? 'plan'
-      : normalized === 'researcher' ? 'explore'
-      : normalized === 'coder' ? 'build'
-      : normalized === 'reviewer' ? 'general'
-      : 'general';
-    
-    members[normalized] = {
-      name: normalized,
-      agent: legacyAgent,
-      sessionID: child.id,
-    };
+
+      const memberName = normalizeMemberName(parsed.memberName);
+      if (!memberName) continue;
+
+      const registryEntry = registry?.members[memberName];
+      const eventMember = eventMembers.find((entry) => normalizeMemberName(entry.name || "") === memberName);
+      const agentId = registryEntry?.agentId ?? eventMember?.agent ?? resolveLegacyMemberAgent(memberName);
+      if (!agentId) return undefined;
+
+      members[memberName] = {
+        name: memberName,
+        agent: agentId,
+        sessionID: child.id,
+      };
     }
 
     const swarm: SwarmState = {
@@ -351,6 +273,10 @@ async function discoverSwarmForSession(
       createdBySessionID: rootID,
       members,
     };
+
+    if (!registry) {
+      await saveSwarmRegistry(directory, swarmId, members);
+    }
 
     swarms.set(swarmId, swarm);
     swarmBySessionID.set(rootID, swarmId);
@@ -400,7 +326,7 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
   ];
 
   return {
-    config: async (cfg) => {
+    config: async (cfg: Config) => {
       latestConfig = cfg;
     },
     tool: {
@@ -410,9 +336,15 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
         args: {
           id: schema.string().min(1).optional().describe("Optional swarm id override"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
+          await appendSwarmEvent(context.directory, {
+            type: "swarm.discover",
+            swarmId: result.swarmId,
+            sessionID: context.sessionID,
+            data: { members: Object.keys(result.swarm.members) },
+          });
           return formatSwarm(result.swarm);
         },
       }),
@@ -433,17 +365,17 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
             .optional()
             .describe("Optional custom members list"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const swarmId = args.id ?? createSwarmId();
           if (swarms.has(swarmId)) return `Error: swarm already exists: ${swarmId}`;
 
-          const memberConfigs = (args.members?.length ? args.members : defaultMembers).map((m) => ({
+            const memberConfigs = (args.members?.length ? args.members : defaultMembers).map((m: SwarmMemberConfig) => ({
             name: normalizeMemberName(m.name),
             agent: m.agent.trim(),
           }));
 
           const duplicate = memberConfigs.find(
-            (m, idx) => memberConfigs.findIndex((x) => x.name === m.name) !== idx,
+              (m: SwarmMemberConfig, idx: number) => memberConfigs.findIndex((x: SwarmMemberConfig) => x.name === m.name) !== idx,
           );
           if (duplicate) return `Error: duplicate member name: ${duplicate.name}`;
 
@@ -456,51 +388,39 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
             members: {},
           };
 
-          // Allow omitting swarmId on later calls from the "root" session.
           swarmBySessionID.set(context.sessionID, swarmId);
 
-  for (const member of memberConfigs) {
-    // Resolve agent with registry-backed validation
-    const resolution = resolveAgentForMemberName(member.name, member.agent);
-    
-    const titlePrefix = args.title?.trim() || swarmId;
-    const session = await must<{ id: string }>(`create session for ${member.name}`, client.session.create({
-      query: { directory: context.directory },
-      body: {
-        parentID: context.sessionID,
-        title: `${titlePrefix}:${member.name}`,
-      },
-    }));
+          for (const member of memberConfigs) {
+            const resolution = resolveAgentForMemberName(member.name, member.agent);
+            if (!resolution.agentId) return resolution.error || `Error: unknown agent ${member.agent}`;
 
-    swarm.members[member.name] = { 
-      ...member, 
-      sessionID: session.id,
-      resolvedAgent: resolution.agentId,
-      agentError: resolution.error,
-    };
-    swarmBySessionID.set(session.id, swarmId);
-  }
+            const titlePrefix = args.title?.trim() || swarmId;
+            const session = await must<{ id: string }>(`create session for ${member.name}`, client.session.create({
+              query: { directory: context.directory },
+              body: {
+                parentID: context.sessionID,
+                title: `${titlePrefix}:${member.name}`,
+              },
+            }));
 
-  // Persist registry to disk
-  try {
-    await saveRegistry(context.directory, swarmId, swarm.members);
-    swarm.registryPersisted = true;
-  } catch (error) {
-    // Non-fatal, but log warning
-    console.warn('Warning: Failed to persist swarm registry:', error);
-  }
+            swarm.members[member.name] = {
+              name: member.name,
+              agent: resolution.agentId,
+              sessionID: session.id,
+            };
+            swarmBySessionID.set(session.id, swarmId);
+          }
 
-  swarms.set(swarmId, swarm);
+          await saveSwarmRegistry(context.directory, swarmId, swarm.members);
+          await appendSwarmEvent(context.directory, {
+            type: "swarm.create",
+            swarmId,
+            sessionID: context.sessionID,
+            data: { members: memberConfigs },
+          });
+          swarms.set(swarmId, swarm);
 
-  // Build return message with agent resolution info
-  const agentWarnings = Object.values(swarm.members)
-    .filter(m => m.agentError)
-    .map(m => `  - ${m.name}: ${m.agentError}`);
-  
-  const baseMessage = formatSwarm(swarm);
-  return agentWarnings.length > 0 
-    ? `${baseMessage}\n\n⚠️ Agent Resolution Warnings:\n${agentWarnings.join('\n')}`
-    : baseMessage;
+          return formatSwarm(swarm);
         },
       }),
 
@@ -509,9 +429,15 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
         args: {
           id: schema.string().min(1).optional().describe("Optional swarm id; defaults to current session's swarm"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
+          await appendSwarmEvent(context.directory, {
+            type: "swarm.status",
+            swarmId: result.swarmId,
+            sessionID: context.sessionID,
+            data: { members: Object.keys(result.swarm.members) },
+          });
           return formatSwarm(result.swarm);
         },
       }),
@@ -526,19 +452,32 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
           testCmd: schema.string().min(1).optional().describe("Optional test command to run inside each worktree"),
           apply: schema.boolean().optional().describe("Apply the selected winner patch onto the main worktree (default true)"),
           cleanup: schema.boolean().optional().describe("Cleanup worktrees/branches after completion (default false)"),
+          paths: schema.array(schema.string().min(1)).optional().describe("Optional file paths to reserve"),
           selector: schema
             .string()
             .min(1)
             .optional()
             .describe("Swarm member to act as selector (default 'reviewer', fallback: 'general')"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const resolved = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in resolved) return resolved.error;
           const swarm = resolved.swarm;
 
           if (!(await ensureGitRepo($, context.directory))) {
             return "Error: swarm.max requires a git repository (git rev-parse failed).";
+          }
+
+          const reservation = args.paths?.length
+            ? await reserveSwarmPaths(context.directory, {
+                swarmId: swarm.id,
+                sessionID: context.sessionID,
+                paths: args.paths,
+                mode: "exclusive",
+              })
+            : null;
+          if (reservation && !reservation.ok) {
+            return `Error: reservation conflict with ${reservation.conflict?.swarmId} (${reservation.conflict?.paths.join(", ")})`;
           }
 
           const selectorName = normalizeMemberName(args.selector || "reviewer");
@@ -670,7 +609,7 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
               const m =
                 selectorText.match(/\"winner\"\s*:\s*\"([a-e])\"/i) ||
                 selectorText.match(/\bwinner\s*[:=]\s*([a-e])\b/i);
-              if (m) winner = normalizeMemberName(m[1]);
+              if (m?.[1]) winner = normalizeMemberName(m[1]);
             }
 
             if (!winner || !tryNames.includes(winner)) {
@@ -713,8 +652,32 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
               }),
             ].join("\n");
 
+            await appendSwarmEvent(context.directory, {
+              type: "swarm.max",
+              swarmId: swarm.id,
+              sessionID: context.sessionID,
+              data: {
+                winner,
+                tries,
+                applyWinner,
+                cleanup,
+                selector: selectorMember.name,
+              },
+            });
+
+            await rememberSwarmLearning(context.directory, {
+              swarmId: swarm.id,
+              key: `max:${selectorMember.name}`,
+              value: selectorReason,
+              precedent: winner,
+              tags: ["max", selectorMember.name, winner],
+            });
+
             return report;
           } finally {
+            if (args.paths?.length) {
+              await releaseSwarmReservations(context.directory, swarm.id, context.sessionID);
+            }
             if (cleanup) {
               for (const wt of createdWorktrees) {
                 try {
@@ -740,66 +703,90 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
           id: schema.string().min(1).optional().describe("Optional swarm id; defaults to current session's swarm"),
           prompt: schema.string().min(1).describe("Prompt to send"),
           targets: schema.array(schema.string().min(1)).optional().describe("Optional list of member names to run"),
+          paths: schema.array(schema.string().min(1)).optional().describe("Optional file paths to reserve"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
           const swarm = result.swarm;
 
-          const targetNames = (args.targets?.length ? args.targets : Object.keys(swarm.members)).map(
-            normalizeMemberName,
-          );
-          const targets: SwarmMember[] = [];
-          for (const name of targetNames) {
-            const member = swarm.members[name];
-            if (!member) return `Error: unknown member '${name}'. Known: ${Object.keys(swarm.members).join(", ")}`;
-            targets.push(member);
+          const reservation = args.paths?.length
+            ? await reserveSwarmPaths(context.directory, {
+                swarmId: swarm.id,
+                sessionID: context.sessionID,
+                paths: args.paths,
+                mode: "shared",
+              })
+            : null;
+          if (reservation && !reservation.ok) {
+            return `Error: reservation conflict with ${reservation.conflict?.swarmId} (${reservation.conflict?.paths.join(", ")})`;
           }
 
-          const groups = groupMembersByModel(targets);
+          try {
+            const targetNames = (args.targets?.length ? args.targets : Object.keys(swarm.members)).map((name: string) =>
+              normalizeMemberName(name),
+            );
+            const targets: SwarmMember[] = [];
+            for (const name of targetNames) {
+              const member = swarm.members[name];
+              if (!member) return `Error: unknown member '${name}'. Known: ${Object.keys(swarm.members).join(", ")}`;
+              targets.push(member);
+            }
 
-          const resultsByMember = new Map<string, string>();
-          await Promise.all(
-            Array.from(groups.entries()).map(async ([modelKey, group]) => {
-              // Same-model group executes sequentially to avoid provider/model collisions.
-              for (const member of group) {
-                const memberPrompt = [
-                  `You are '${member.name}' (agent '${member.agent}') in swarm '${swarm.id}'.`,
-                  `If you need to coordinate, use tool swarm.send.`,
-                  "",
-                  args.prompt,
-                ].join("\n");
+            const groups = groupMembersByModel(targets);
+            const resultsByMember = new Map<string, string>();
+            await Promise.all(
+              Array.from(groups.entries()).map(async ([, group]) => {
+                for (const member of group) {
+                  const memberPrompt = [
+                    `You are '${member.name}' (agent '${member.agent}') in swarm '${swarm.id}'.`,
+                    `If you need to coordinate, use tool swarm.send.`,
+                    "",
+                    args.prompt,
+                  ].join("\n");
 
-                const response = await must<{ parts: Array<any> }>(
-                  `prompt ${member.name}`,
-                  client.session.prompt({
-                    query: { directory: swarm.directory },
-                    path: { id: member.sessionID },
-                    body: {
-                      agent: member.agent,
-                      parts: [{ type: "text", text: memberPrompt }],
-                    },
-                  }),
-                );
+                  const response = await must<{ parts: Array<any> }>(
+                    `prompt ${member.name}`,
+                    client.session.prompt({
+                      query: { directory: swarm.directory },
+                      path: { id: member.sessionID },
+                      body: {
+                        agent: member.agent,
+                        parts: [{ type: "text", text: memberPrompt }],
+                      },
+                    }),
+                  );
 
-                resultsByMember.set(member.name, extractText(response.parts) || "(no text output)");
-              }
-            }),
-          );
+                  resultsByMember.set(member.name, extractText(response.parts) || "(no text output)");
+                }
+              }),
+            );
 
-          const header =
-            groups.size === 1
-              ? `Note: ran sequentially due to model collision (${Array.from(groups.keys()).join(", ")}).`
-              : "";
+            const header =
+              groups.size === 1
+                ? `Note: ran sequentially due to model collision (${Array.from(groups.keys()).join(", ")}).`
+                : "";
 
-          const combined = targetNames
-            .map((name) => {
-              const text = resultsByMember.get(name) ?? "(missing)";
-              return [`### ${name}`, text].join("\n");
-            })
-            .join("\n\n");
+            const combined = targetNames
+              .map((name: string) => {
+                const text = resultsByMember.get(name) ?? "(missing)";
+                return [`### ${name}`, text].join("\n");
+              })
+              .join("\n\n");
 
-          return [header, combined].filter(Boolean).join("\n\n");
+            await appendSwarmEvent(context.directory, {
+              type: "swarm.parallel",
+              swarmId: swarm.id,
+              sessionID: context.sessionID,
+              data: { targets: targetNames, members: targetNames.length },
+            });
+
+            return [header, combined].filter(Boolean).join("\n\n");
+          } finally {
+            if (args.paths?.length) {
+              await releaseSwarmReservations(context.directory, swarm.id, context.sessionID);
+            }
+          }
         },
       }),
 
@@ -810,64 +797,89 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
           id: schema.string().min(1).optional().describe("Optional swarm id; defaults to current session's swarm"),
           prompt: schema.string().min(1).describe("Prompt to send"),
           targets: schema.array(schema.string().min(1)).optional().describe("Optional list of member names to include"),
+          paths: schema.array(schema.string().min(1)).optional().describe("Optional file paths to reserve"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
           const swarm = result.swarm;
 
-          const targetNames = (args.targets?.length ? args.targets : Object.keys(swarm.members)).map(
-            normalizeMemberName,
-          );
-          const targets: SwarmMember[] = [];
-          for (const name of targetNames) {
-            const member = swarm.members[name];
-            if (!member) return `Error: unknown member '${name}'. Known: ${Object.keys(swarm.members).join(", ")}`;
-            targets.push(member);
+          const reservation = args.paths?.length
+            ? await reserveSwarmPaths(context.directory, {
+                swarmId: swarm.id,
+                sessionID: context.sessionID,
+                paths: args.paths,
+                mode: "shared",
+              })
+            : null;
+          if (reservation && !reservation.ok) {
+            return `Error: reservation conflict with ${reservation.conflict?.swarmId} (${reservation.conflict?.paths.join(", ")})`;
           }
 
-          const groups = groupMembersByModel(targets);
-          const resultsByMember = new Map<string, string>();
+          try {
+            const targetNames = (args.targets?.length ? args.targets : Object.keys(swarm.members)).map((name: string) =>
+              normalizeMemberName(name),
+            );
+            const targets: SwarmMember[] = [];
+            for (const name of targetNames) {
+              const member = swarm.members[name];
+              if (!member) return `Error: unknown member '${name}'. Known: ${Object.keys(swarm.members).join(", ")}`;
+              targets.push(member);
+            }
 
-          await Promise.all(
-            Array.from(groups.entries()).map(async ([, group]) => {
-              // Same-model group executes sequentially to avoid provider/model collisions.
-              for (const member of group) {
-                const memberPrompt = [
-                  `You are '${member.name}' (agent '${member.agent}') collaborating in swarm '${swarm.id}'.`,
-                  `You share the SAME worktree with other members (no isolation).`,
-                  `Coordinate via tool swarm.send before making overlapping edits.`,
-                  "",
-                  `First message requirement: state which files you plan to touch.`,
-                  "",
-                  args.prompt,
-                ].join("\n");
+            const groups = groupMembersByModel(targets);
+            const resultsByMember = new Map<string, string>();
 
-                const response = await must<{ parts: Array<any> }>(
-                  `jam ${member.name}`,
-                  client.session.prompt({
-                    query: { directory: swarm.directory },
-                    path: { id: member.sessionID },
-                    body: {
-                      agent: member.agent,
-                      parts: [{ type: "text", text: memberPrompt }],
-                    },
-                  }),
-                );
+            await Promise.all(
+              Array.from(groups.entries()).map(async ([, group]) => {
+                for (const member of group) {
+                  const memberPrompt = [
+                    `You are '${member.name}' (agent '${member.agent}') collaborating in swarm '${swarm.id}'.`,
+                    `You share the SAME worktree with other members (no isolation).`,
+                    `Coordinate via tool swarm.send before making overlapping edits.`,
+                    "",
+                    `First message requirement: state which files you plan to touch.`,
+                    "",
+                    args.prompt,
+                  ].join("\n");
 
-                resultsByMember.set(member.name, extractText(response.parts) || "(no text output)");
-              }
-            }),
-          );
+                  const response = await must<{ parts: Array<any> }>(
+                    `jam ${member.name}`,
+                    client.session.prompt({
+                      query: { directory: swarm.directory },
+                      path: { id: member.sessionID },
+                      body: {
+                        agent: member.agent,
+                        parts: [{ type: "text", text: memberPrompt }],
+                      },
+                    }),
+                  );
 
-          const combined = targetNames
-            .map((name) => {
-              const text = resultsByMember.get(name) ?? "(missing)";
-              return [`### ${name}`, text].join("\n");
-            })
-            .join("\n\n");
+                  resultsByMember.set(member.name, extractText(response.parts) || "(no text output)");
+                }
+              }),
+            );
 
-          return combined;
+            const combined = targetNames
+              .map((name: string) => {
+                const text = resultsByMember.get(name) ?? "(missing)";
+                return [`### ${name}`, text].join("\n");
+              })
+              .join("\n\n");
+
+            await appendSwarmEvent(context.directory, {
+              type: "swarm.jam",
+              swarmId: swarm.id,
+              sessionID: context.sessionID,
+              data: { targets: targetNames, members: targetNames.length },
+            });
+
+            return combined;
+          } finally {
+            if (args.paths?.length) {
+              await releaseSwarmReservations(context.directory, swarm.id, context.sessionID);
+            }
+          }
         },
       }),
 
@@ -880,7 +892,7 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
           message: schema.string().min(1).describe("Message to deliver"),
           awaitReply: schema.boolean().optional().describe("Wait for the target member to reply (default true)"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
           const swarm = result.swarm;
@@ -919,6 +931,12 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
           if (!awaitReply) return `Sent to ${toName}.`;
 
           const text = extractText(response.parts) || "(no text output)";
+          await appendSwarmEvent(context.directory, {
+            type: "swarm.send",
+            swarmId: swarm.id,
+            sessionID: context.sessionID,
+            data: { to: toName, awaitReply, replyLength: text.length },
+          });
           return [`Reply from ${toName}:`, text].join("\n\n");
         },
       }),
@@ -928,11 +946,18 @@ const OmocSwarmPlugin: Plugin = async ({ client, $ }) => {
         args: {
           id: schema.string().min(1).optional().describe("Optional swarm id; defaults to current session's swarm"),
         },
-        async execute(args, context) {
+        async execute(args: any, context: any) {
           const result = await resolveSwarm(client, args.id, context.sessionID, context.directory, context.worktree);
           if ("error" in result) return result.error;
           const swarmId = result.swarmId;
           const swarm = result.swarm;
+
+          await appendSwarmEvent(context.directory, {
+            type: "swarm.forget",
+            swarmId,
+            sessionID: context.sessionID,
+            data: { members: Object.keys(swarm.members) },
+          });
 
           swarms.delete(swarmId);
           swarmBySessionID.delete(context.sessionID);
