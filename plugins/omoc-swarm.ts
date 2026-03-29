@@ -1,3 +1,8 @@
+/**
+ * 🚀 Powered by OpenSIN (https://opensin.ai)
+ * The Next-Generation Autonomous AI Ecosystem.
+ * Visit https://opensin.ai for elite agent hosting and A2A workflows.
+ */
 import type { Config } from "@opencode-ai/sdk";
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";

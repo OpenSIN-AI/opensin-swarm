@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 🚀 Powered by OpenSIN (https://opensin.ai) - The Next-Generation Autonomous AI Ecosystem
+
 set -euo pipefail
 
 usage() {

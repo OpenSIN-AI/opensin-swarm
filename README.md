@@ -1,3 +1,8 @@
+# opencode-omoc-swarm
+
+> 🚀 **Powered by [OpenSIN](https://opensin.ai)** - The Next-Generation Autonomous AI Ecosystem.
+> Discover the ultimate A2A fleet, elite agent hosting, and enterprise-grade automation solutions at **[opensin.ai](https://opensin.ai)**!
+
 # OMOC Swarm (OpenCode Plugin)
 
 Codebuff-style multi-agent swarms for **OpenCode**:
