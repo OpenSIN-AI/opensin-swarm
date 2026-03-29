@@ -1,0 +1,228 @@
+{
+  "description": "Realistic routing and selector benchmark corpus for OMOC Swarm",
+  "version": "1.0.0",
+  "routing": {
+    "description": "Agent routing test cases covering legacy aliases, canonical IDs, and edge cases",
+    "testCases": [
+      {
+        "category": "legacy-aliases",
+        "description": "Legacy role names that should resolve to canonical agent IDs",
+        "cases": [
+          { "input": "planner", "expected": "plan", "rationale": "Legacy planner role" },
+          { "input": "researcher", "expected": "explore", "rationale": "Legacy researcher role" },
+          { "input": "coder", "expected": "build", "rationale": "Legacy coder role" },
+          { "input": "reviewer", "expected": "general", "rationale": "Legacy reviewer role" },
+          { "input": "PLANNER", "expected": "plan", "rationale": "Case insensitive legacy" },
+          { "input": "Planner", "expected": "plan", "rationale": "Mixed case legacy" }
+        ]
+      },
+      {
+        "category": "canonical-ids",
+        "description": "Canonical agent IDs that should resolve to themselves",
+        "cases": [
+          { "input": "plan", "expected": "plan", "rationale": "Canonical planning agent" },
+          { "input": "build", "expected": "build", "rationale": "Canonical build agent" },
+          { "input": "explore", "expected": "explore", "rationale": "Canonical exploration agent" },
+          { "input": "general", "expected": "general", "rationale": "Canonical general agent" },
+          { "input": "metis", "expected": "metis", "rationale": "Metis strategic agent" },
+          { "input": "momus", "expected": "momus", "rationale": "Momus critic agent" },
+          { "input": "oracle", "expected": "oracle", "rationale": "Oracle knowledge agent" },
+          { "input": "librarian", "expected": "librarian", "rationale": "Librarian documentation agent" }
+        ]
+      },
+      {
+        "category": "unknown-agents",
+        "description": "Unknown or invalid agent IDs that should return null",
+        "cases": [
+          { "input": "unknown-agent", "expected": null, "rationale": "Completely unknown agent" },
+          { "input": "", "expected": null, "rationale": "Empty string" },
+          { "input": "invalid_agent", "expected": null, "rationale": "Invalid format" },
+          { "input": "nonexistent", "expected": null, "rationale": "Non-existent agent" },
+          { "input": "build2", "expected": null, "rationale": "Similar but wrong name" }
+        ]
+      }
+    ]
+  },
+  "selector": {
+    "description": "Selector benchmark cases for MAX mode winner selection",
+    "testCases": [
+      {
+        "scenario": "minimal-safe-patch",
+        "description": "Prefer smallest correct solution when tests pass",
+        "prompt": "Prefer the smallest safe patch with passing tests.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "diff-size",
+          "tertiary": "file-count"
+        },
+        "cases": [
+          {
+            "name": "a",
+            "changedFiles": 4,
+            "testExitCode": 0,
+            "diffSize": 3200,
+            "description": "Large change, tests pass"
+          },
+          {
+            "name": "b",
+            "changedFiles": 1,
+            "testExitCode": 0,
+            "diffSize": 900,
+            "description": "Small change, tests pass - WINNER"
+          },
+          {
+            "name": "c",
+            "changedFiles": 2,
+            "testExitCode": 1,
+            "diffSize": 700,
+            "description": "Small change, tests fail"
+          }
+        ],
+        "expected": "b"
+      },
+      {
+        "scenario": "correctness-over-size",
+        "description": "Prefer correctness even if solution is larger",
+        "prompt": "Prefer correctness over size when tests fail.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "correctness",
+          "tertiary": "maintainability"
+        },
+        "cases": [
+          {
+            "name": "a",
+            "changedFiles": 1,
+            "testExitCode": 1,
+            "diffSize": 300,
+            "description": "Small but failing"
+          },
+          {
+            "name": "b",
+            "changedFiles": 2,
+            "testExitCode": 1,
+            "diffSize": 200,
+            "description": "Smallest but failing"
+          },
+          {
+            "name": "c",
+            "changedFiles": 3,
+            "testExitCode": 0,
+            "diffSize": 1400,
+            "description": "Larger but correct - WINNER"
+          }
+        ],
+        "expected": "c"
+      },
+      {
+        "scenario": "test-failure-penalty",
+        "description": "Heavy penalty for test failures regardless of size",
+        "prompt": "Tests must pass; prefer minimal changes otherwise.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "diff-size"
+        },
+        "cases": [
+          {
+            "name": "x",
+            "changedFiles": 10,
+            "testExitCode": 0,
+            "diffSize": 5000,
+            "description": "Large but passing - WINNER"
+          },
+          {
+            "name": "y",
+            "changedFiles": 1,
+            "testExitCode": 1,
+            "diffSize": 100,
+            "description": "Tiny but failing"
+          },
+          {
+            "name": "z",
+            "changedFiles": 2,
+            "testExitCode": 1,
+            "diffSize": 200,
+            "description": "Small but failing"
+          }
+        ],
+        "expected": "x"
+      },
+      {
+        "scenario": "file-count-matters",
+        "description": "When tests equal, prefer fewer file changes",
+        "prompt": "Make surgical changes; touch as few files as possible.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "file-count",
+          "tertiary": "diff-size"
+        },
+        "cases": [
+          {
+            "name": "surgical",
+            "changedFiles": 1,
+            "testExitCode": 0,
+            "diffSize": 1500,
+            "description": "Single file, moderate size - WINNER"
+          },
+          {
+            "name": "scattered",
+            "changedFiles": 8,
+            "testExitCode": 0,
+            "diffSize": 1200,
+            "description": "Many files, smaller total"
+          }
+        ],
+        "expected": "surgical"
+      },
+      {
+        "scenario": "refactor-preference",
+        "description": "When both pass tests, smaller size wins (current scoring)",
+        "prompt": "Make minimal changes; prefer smaller diffs.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "diff-size"
+        },
+        "cases": [
+          {
+            "name": "hacky",
+            "changedFiles": 2,
+            "testExitCode": 0,
+            "diffSize": 400,
+            "description": "Small change, tests pass - WINNER"
+          },
+          {
+            "name": "clean",
+            "changedFiles": 5,
+            "testExitCode": 0,
+            "diffSize": 2200,
+            "description": "Larger change, tests pass"
+          }
+        ],
+        "expected": "hacky"
+      }
+    ]
+  },
+  "edgeCases": {
+    "description": "Edge cases for robustness testing",
+    "routing": [
+      { "input": "  plan  ", "expected": "plan", "rationale": "Whitespace trimming" },
+      { "input": "PLAN", "expected": "plan", "rationale": "Uppercase canonical" },
+      { "input": "PlAn", "expected": "plan", "rationale": "Mixed case canonical" }
+    ],
+    "selector": {
+      "testCases": [
+        {
+          "scenario": "tie-breaker",
+          "description": "When all metrics equal, use deterministic tie-breaker",
+          "prompt": "All candidates are equal; pick first.",
+          "cases": [
+            { "name": "a", "changedFiles": 2, "testExitCode": 0, "diffSize": 1000 },
+            { "name": "b", "changedFiles": 2, "testExitCode": 0, "diffSize": 1000 }
+          ],
+          "expected": "a",
+          "rationale": "First in list wins ties"
+        }
+      ]
+    }
+  }
+}
