@@ -1,0 +1,10 @@
+{
+  "roles": [
+    { "name": "planner", "agent": "plan", "responsibility": "decompose work" },
+    { "name": "researcher", "agent": "explore", "responsibility": "gather evidence" },
+    { "name": "coder", "agent": "build", "responsibility": "implement changes" },
+    { "name": "reviewer", "agent": "general", "responsibility": "review and report" },
+    { "name": "metis", "agent": "metis", "responsibility": "planning and analysis" },
+    { "name": "momus", "agent": "momus", "responsibility": "review and critique" }
+  ]
+}

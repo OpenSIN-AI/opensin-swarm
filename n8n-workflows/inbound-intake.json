@@ -1,0 +1,9 @@
+{
+  "name": "inbound-intake",
+  "active": true,
+  "nodes": [],
+  "connections": {},
+  "settings": {
+    "failClosed": true
+  }
+}

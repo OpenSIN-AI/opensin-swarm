@@ -1,0 +1,7 @@
+{
+  "name": "pr-watcher",
+  "source": "gh",
+  "scope": "open pull requests",
+  "output": "number\treviewDecision\ttitle\turl",
+  "action": "surface review feedback before merge"
+}

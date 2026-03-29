@@ -1,0 +1,9 @@
+{
+  "platforms": [
+    {
+      "name": "OpenCode",
+      "entrypoint": "bin/oc-swarm",
+      "supported": true
+    }
+  ]
+}
