@@ -38,7 +38,46 @@
           { "input": "", "expected": null, "rationale": "Empty string" },
           { "input": "invalid_agent", "expected": null, "rationale": "Invalid format" },
           { "input": "nonexistent", "expected": null, "rationale": "Non-existent agent" },
-          { "input": "build2", "expected": null, "rationale": "Similar but wrong name" }
+          { "input": "build2", "expected": null, "rationale": "Similar but wrong name" },
+          { "input": "builder", "expected": null, "rationale": "Common typo for build" },
+          { "input": "planning", "expected": null, "rationale": "Verb form instead of noun" },
+          { "input": "explorer", "expected": null, "rationale": "Common confusion with explore" },
+          { "input": "generality", "expected": null, "rationale": "Wrong word form" },
+          { "input": "cooder", "expected": null, "rationale": "Misspelling of coder" },
+          { "input": "anlyzer", "expected": null, "rationale": "Misspelling of analyzer" }
+        ]
+      },
+      {
+        "category": "operator-mistakes",
+        "description": "Real-world operator input mistakes and typos",
+        "cases": [
+          { "input": "  planner  ", "expected": "plan", "rationale": "Extra whitespace" },
+          { "input": "planner\t", "expected": "plan", "rationale": "Trailing tab" },
+          { "input": "\nresearcher", "expected": "explore", "rationale": "Leading newline" },
+          { "input": "BuiLd", "expected": "build", "rationale": "Random casing" },
+          { "input": "EXPLORE", "expected": "explore", "rationale": "All uppercase canonical" },
+          { "input": "ExPlOrE", "expected": "explore", "rationale": "Alternating case" },
+          { "input": "m  e  t  i  s", "expected": null, "rationale": "Spaces in middle should fail" },
+          { "input": "metis ", "expected": "metis", "rationale": "Trailing space on valid agent" }
+        ]
+      },
+      {
+        "category": "near-miss-ids",
+        "description": "Agent IDs that are close to valid but should still fail",
+        "cases": [
+          { "input": "planer", "expected": null, "rationale": "Missing 'n' from planner" },
+          { "input": "planing", "expected": null, "rationale": "Missing 'n' in planning" },
+          { "input": "bild", "expected": null, "rationale": "German spelling of build" },
+          { "input": "bilds", "expected": null, "rationale": "Pluralized build typo" },
+          { "input": "buildd", "expected": null, "rationale": "Double letter typo" },
+          { "input": "explorr", "expected": null, "rationale": "Double letter explore" },
+          { "input": "explor", "expected": null, "rationale": "Missing 'e' from explore" },
+          { "input": "genera", "expected": null, "rationale": "Substring of general" },
+          { "input": "generals", "expected": null, "rationale": "Pluralized general" },
+          { "input": "metiss", "expected": null, "rationale": "Double 's' on metis" },
+          { "input": "momous", "expected": null, "rationale": "Vowel swap in momus" },
+          { "input": "libary", "expected": null, "rationale": "Common misspelling of library" },
+          { "input": "libratrian", "expected": null, "rationale": "Extra syllable in librarian" }
         ]
       }
     ]
@@ -199,6 +238,135 @@
           }
         ],
         "expected": "hacky"
+      },
+      {
+        "scenario": "real-swarm-fix",
+        "description": "Real swarm scenario: bug fix with minimal changes",
+        "prompt": "Fix the authentication bug; minimize side effects.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "file-count",
+          "tertiary": "diff-size"
+        },
+        "cases": [
+          {
+            "name": "comprehensive",
+            "changedFiles": 12,
+            "testExitCode": 0,
+            "diffSize": 4500,
+            "description": "Fixes bug but touches many files"
+          },
+          {
+            "name": "targeted",
+            "changedFiles": 2,
+            "testExitCode": 0,
+            "diffSize": 800,
+            "description": "Targeted fix, minimal files - WINNER"
+          },
+          {
+            "name": "incomplete",
+            "changedFiles": 1,
+            "testExitCode": 1,
+            "diffSize": 200,
+            "description": "Smallest but tests fail"
+          }
+        ],
+        "expected": "targeted"
+      },
+      {
+        "scenario": "feature-implementation",
+        "description": "Real swarm scenario: new feature implementation",
+        "prompt": "Implement the feature; prefer minimal correct solution.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "diff-size",
+          "tertiary": "file-count"
+        },
+        "cases": [
+          {
+            "name": "minimal",
+            "changedFiles": 3,
+            "testExitCode": 0,
+            "diffSize": 600,
+            "description": "Minimal correct implementation - WINNER"
+          },
+          {
+            "name": "complete",
+            "changedFiles": 5,
+            "testExitCode": 0,
+            "diffSize": 1800,
+            "description": "More complete but larger"
+          },
+          {
+            "name": "overengineered",
+            "changedFiles": 10,
+            "testExitCode": 0,
+            "diffSize": 5000,
+            "description": "Overengineered solution"
+          }
+        ],
+        "expected": "minimal"
+      },
+      {
+        "scenario": "performance-fix",
+        "description": "Real swarm scenario: performance optimization",
+        "prompt": "Improve performance; maintain correctness.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "diff-size",
+          "tertiary": "file-count"
+        },
+        "cases": [
+          {
+            "name": "risky",
+            "changedFiles": 8,
+            "testExitCode": 0,
+            "diffSize": 3000,
+            "description": "Large refactor, tests pass"
+          },
+          {
+            "name": "conservative",
+            "changedFiles": 3,
+            "testExitCode": 0,
+            "diffSize": 1200,
+            "description": "Targeted optimization - WINNER"
+          },
+          {
+            "name": "broken",
+            "changedFiles": 2,
+            "testExitCode": 1,
+            "diffSize": 500,
+            "description": "Broken optimization"
+          }
+        ],
+        "expected": "conservative"
+      },
+      {
+        "scenario": "test-only-change",
+        "description": "Real swarm scenario: test improvement without logic changes",
+        "prompt": "Add test coverage for edge cases.",
+        "selectionCriteria": {
+          "priority": "test-status",
+          "secondary": "file-count",
+          "tertiary": "diff-size"
+        },
+        "cases": [
+          {
+            "name": "focused",
+            "changedFiles": 1,
+            "testExitCode": 0,
+            "diffSize": 400,
+            "description": "Single test file - WINNER"
+          },
+          {
+            "name": "scattered",
+            "changedFiles": 5,
+            "testExitCode": 0,
+            "diffSize": 350,
+            "description": "Multiple test files"
+          }
+        ],
+        "expected": "focused"
       }
     ]
   },
