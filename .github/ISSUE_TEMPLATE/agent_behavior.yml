@@ -1,0 +1,96 @@
+name: 🤖 Agent Behavior Issue
+description: Report unexpected A2A agent behavior, incorrect actions, or permission violations
+title: "[AGENT] "
+labels:
+  - agent-behavior
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report unexpected agent behavior. This is for unexpected actions, file modifications outside scope, ignoring instructions, or making assumptions.
+        
+        **This is for:** Unexpected actions, file modifications, ignoring instructions, making assumptions
+        **NOT for:** Crashes, API errors, or installation issues (use Bug Report instead)
+        
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight Checklist
+      options:
+        - label: I have searched existing issues for similar behavior reports
+          required: true
+        - label: This report does NOT contain sensitive information (API keys, passwords, etc.)
+          required: true
+          
+  - type: dropdown
+    id: behavior_type
+    attributes:
+      label: Type of Behavior Issue
+      options:
+        - Agent modified files I didn't ask it to modify
+        - Agent accessed files outside the working directory
+        - Agent ignored my instructions or configuration
+        - Agent reverted/undid previous changes without asking
+        - Agent made incorrect assumptions about my project
+        - Agent refused a reasonable request
+        - Agent's behavior changed between sessions
+        - Subagent behaved unexpectedly
+        - Other unexpected behavior
+    validations:
+      required: true
+      
+  - type: textarea
+    id: what_you_asked
+    attributes:
+      label: What You Asked the Agent to Do
+      description: Provide the exact prompt or command
+    validations:
+      required: true
+      
+  - type: textarea
+    id: what_agent_did
+    attributes:
+      label: What the Agent Actually Did
+      description: Describe step-by-step what the agent did instead
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should the agent have done?
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Can You Reproduce This?
+      options:
+        - Yes, every time
+        - Sometimes (intermittent)
+        - No, only happened once
+        - Haven't tried
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Critical - Data loss or corrupted project
+        - High - Significant unwanted changes
+        - Medium - Extra work to undo changes
+        - Low - Minor inconvenience
+    validations:
+      required: true
+      
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Conversation logs, screenshots, or patterns you've noticed
+    validations:
+      required: false
