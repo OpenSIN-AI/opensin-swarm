@@ -4,8 +4,8 @@
 # writes it back into the persistent brain stores.
 # ALSO runs sin-brain auto-sync to keep global and local brain in sync.
 
-BRAIN_CLI="/Users/jeremy/dev/Plugin-SIN-Swarm/src/cli.js"
-BRAIN_ROOT="/Users/jeremy/dev/Plugin-SIN-Swarm"
+BRAIN_CLI="/Users/jeremy/dev/global-brain/src/cli.js"
+BRAIN_ROOT="/Users/jeremy/dev/global-brain"
 PROJECT_ID="Plugin-SIN-Swarm"
 SESSION_ID="session-$(date +%s)"
 

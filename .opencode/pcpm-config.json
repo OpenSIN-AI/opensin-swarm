@@ -5,7 +5,7 @@
     "onFailure": "/Users/jeremy/dev/Plugin-SIN-Swarm/.opencode/hooks/pcpm-after-run.sh"
   },
   "pcpm": {
-    "brainRepoPath": "/Users/jeremy/dev/Plugin-SIN-Swarm",
+    "brainRepoPath": "/Users/jeremy/dev/global-brain",
     "projectId": "Plugin-SIN-Swarm",
     "goalId": "default-goal",
     "goalDescription": "Continue development",

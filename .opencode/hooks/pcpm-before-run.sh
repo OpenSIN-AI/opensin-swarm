@@ -3,8 +3,8 @@
 # Loads active context from the persistent brain and injects it
 # into the current OpenCode session as a system-level preamble.
 
-BRAIN_CLI="/Users/jeremy/dev/Plugin-SIN-Swarm/src/cli.js"
-BRAIN_ROOT="/Users/jeremy/dev/Plugin-SIN-Swarm"
+BRAIN_CLI="/Users/jeremy/dev/global-brain/src/cli.js"
+BRAIN_ROOT="/Users/jeremy/dev/global-brain"
 PROJECT_ID="Plugin-SIN-Swarm"
 GOAL_ID="default-goal"
 GOAL_DESC="Continue development"
