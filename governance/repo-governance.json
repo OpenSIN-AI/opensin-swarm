@@ -1,18 +1,9 @@
 {
-  "repo": "Delqhi/opencode-omoc-swarm",
-  "owner": "Delqhi",
-  "reviewPolicy": {
-    "minimumApprovals": 1,
-    "requirePassingChecks": true,
-    "requireIssueReference": true
-  },
-  "releasePolicy": {
-    "branch": "main",
-    "requireSmokeTest": true,
-    "requireDocsSync": true
-  },
-  "compatibility": {
-    "opencode": "current-mainline",
-    "pluginApi": "current-mainline"
+  "version": "1.0",
+  "repo": "Plugin-SIN-Swarm",
+  "rules": {
+    "require-pr-watcher": true,
+    "require-visual-evidence": true,
+    "fail-closed": true
   }
 }
